@@ -41,14 +41,26 @@ type TaskToSave = {
   createdAt: string;
 };
 
+type EventToSave = {
+  id: string;
+  title: string;
+  date: string;
+  time: string;
+  location: string;
+  createdAt: string;
+};
+
 const TASK_STORAGE_KEY = "campuspilot_tasks";
+const EVENT_STORAGE_KEY = "campuspilot_events";
 
 export default function UploadPage() {
   const [text, setText] = useState("");
   const [result, setResult] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
   const [tasksSaved, setTasksSaved] = useState(0);
+  const [eventsSaved, setEventsSaved] = useState(0);
 
   async function analyze() {
     if (!text.trim()) {
@@ -60,21 +72,28 @@ export default function UploadPage() {
     setError("");
     setResult(null);
     setTasksSaved(0);
+    setEventsSaved(0);
 
     try {
+      // ==================================================
+      // CALL AI API
+      // ==================================================
+
       const response = await fetch("/api/analyze", {
         method: "POST",
+
         headers: {
           "Content-Type": "application/json",
         },
+
         body: JSON.stringify({
           text: text.trim(),
         }),
       });
 
       // Read response as text first.
-      // This prevents JSON parsing errors when the API returns
-      // an empty response or an HTML error page.
+      // This prevents JSON parsing errors if the server
+      // returns an empty response or HTML error page.
       const rawResponse = await response.text();
 
       console.log("API status:", response.status);
@@ -116,26 +135,28 @@ export default function UploadPage() {
         );
       }
 
-      // --------------------------------------------------
+      // ==================================================
       // AI ANALYSIS SUCCESS
-      // --------------------------------------------------
+      // ==================================================
 
-      setResult(data.analysis);
+      const analysis = data.analysis;
 
-      // --------------------------------------------------
-      // PHASE 2:
-      // SAVE EXTRACTED TASKS TO LOCAL STORAGE
-      // --------------------------------------------------
+      setResult(analysis);
+
+      // ==================================================
+      // PHASE 2
+      // SAVE TASKS
+      // ==================================================
 
       const existingTasks: TaskToSave[] = JSON.parse(
         localStorage.getItem(TASK_STORAGE_KEY) || "[]"
       );
 
-      const tasksFromAI = data.analysis.tasks || [];
+      const tasksFromAI = analysis.tasks || [];
 
       const newTasks: TaskToSave[] = tasksFromAI.map(
         (task, index) => ({
-          id: `${Date.now()}-${index}-${Math.random()
+          id: `${Date.now()}-task-${index}-${Math.random()
             .toString(36)
             .substring(2, 8)}`,
 
@@ -153,10 +174,7 @@ export default function UploadPage() {
         })
       );
 
-      // --------------------------------------------------
-      // PREVENT EXACT DUPLICATE TASKS
-      // --------------------------------------------------
-
+      // Prevent duplicate tasks
       const uniqueNewTasks = newTasks.filter((newTask) => {
         const alreadyExists = existingTasks.some(
           (existingTask) =>
@@ -184,6 +202,68 @@ export default function UploadPage() {
       console.log(
         `CampusPilot saved ${uniqueNewTasks.length} new task(s).`
       );
+
+      // ==================================================
+      // PHASE 3
+      // SAVE IMPORTANT DATES AS CALENDAR EVENTS
+      // ==================================================
+
+      const existingEvents: EventToSave[] = JSON.parse(
+        localStorage.getItem(EVENT_STORAGE_KEY) || "[]"
+      );
+
+      const datesFromAI = analysis.important_dates || [];
+
+      const newEvents: EventToSave[] = datesFromAI
+        .filter((event) => event.date?.trim())
+        .map((event, index) => ({
+          id: `${Date.now()}-event-${index}-${Math.random()
+            .toString(36)
+            .substring(2, 8)}`,
+
+          title: event.title || "Academic Event",
+
+          date: event.date || "",
+
+          time: event.time || "",
+
+          location: event.location || "",
+
+          createdAt: new Date().toISOString(),
+        }));
+
+      // Prevent duplicate calendar events
+      const uniqueNewEvents = newEvents.filter(
+        (newEvent) => {
+          const alreadyExists = existingEvents.some(
+            (existingEvent) =>
+              existingEvent.title.trim().toLowerCase() ===
+                newEvent.title.trim().toLowerCase() &&
+              existingEvent.date.trim().toLowerCase() ===
+                newEvent.date.trim().toLowerCase() &&
+              existingEvent.time.trim().toLowerCase() ===
+                newEvent.time.trim().toLowerCase()
+          );
+
+          return !alreadyExists;
+        }
+      );
+
+      const updatedEvents = [
+        ...existingEvents,
+        ...uniqueNewEvents,
+      ];
+
+      localStorage.setItem(
+        EVENT_STORAGE_KEY,
+        JSON.stringify(updatedEvents)
+      );
+
+      setEventsSaved(uniqueNewEvents.length);
+
+      console.log(
+        `CampusPilot saved ${uniqueNewEvents.length} new calendar event(s).`
+      );
     } catch (error) {
       console.error("Analysis error:", error);
 
@@ -202,13 +282,17 @@ export default function UploadPage() {
     setResult(null);
     setError("");
     setTasksSaved(0);
+    setEventsSaved(0);
   }
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-12 text-white">
       <div className="mx-auto max-w-6xl">
 
-        {/* Header */}
+        {/* ==================================================
+            HEADER
+        ================================================== */}
+
         <div className="mb-10">
           <p className="mb-3 text-sm font-semibold uppercase tracking-wider text-blue-400">
             CampusPilot AI Agent
@@ -224,7 +308,10 @@ export default function UploadPage() {
           </p>
         </div>
 
-        {/* Notice Input */}
+        {/* ==================================================
+            NOTICE INPUT
+        ================================================== */}
+
         <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
           <div className="mb-4 flex items-center justify-between">
@@ -261,9 +348,13 @@ export default function UploadPage() {
               : "✨ Analyze Notice"}
           </button>
 
-          {/* Tasks Saved Message */}
+          {/* ==================================================
+              SUCCESS MESSAGES
+          ================================================== */}
+
           {tasksSaved > 0 && (
             <div className="mt-5 rounded-xl border border-green-500/30 bg-green-500/10 p-4">
+
               <p className="font-semibold text-green-300">
                 ✓ {tasksSaved} task
                 {tasksSaved !== 1 ? "s" : ""} added to
@@ -280,6 +371,30 @@ export default function UploadPage() {
               >
                 View My Tasks →
               </a>
+
+            </div>
+          )}
+
+          {eventsSaved > 0 && (
+            <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
+
+              <p className="font-semibold text-blue-300">
+                📅 {eventsSaved} calendar event
+                {eventsSaved !== 1 ? "s" : ""} added
+              </p>
+
+              <p className="mt-1 text-sm text-blue-400">
+                Important dates from this notice have been
+                added to your academic calendar.
+              </p>
+
+              <a
+                href="/calendar"
+                className="mt-3 inline-block rounded-lg bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300 transition hover:bg-blue-500/20"
+              >
+                View Academic Calendar →
+              </a>
+
             </div>
           )}
 
@@ -289,6 +404,7 @@ export default function UploadPage() {
             result.tasks.length > 0 &&
             tasksSaved === 0 && (
               <div className="mt-5 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+
                 <p className="font-semibold text-yellow-300">
                   ℹ️ No new tasks were added
                 </p>
@@ -304,12 +420,43 @@ export default function UploadPage() {
                 >
                   View My Tasks →
                 </a>
+
               </div>
             )}
 
-          {/* Error */}
+          {/* No new events */}
+          {!loading &&
+            result &&
+            result.important_dates.length > 0 &&
+            eventsSaved === 0 && (
+              <div className="mt-4 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+
+                <p className="font-semibold text-yellow-300">
+                  ℹ️ No new calendar events were added
+                </p>
+
+                <p className="mt-1 text-sm text-yellow-400">
+                  These dates may already exist in your
+                  Academic Calendar.
+                </p>
+
+                <a
+                  href="/calendar"
+                  className="mt-3 inline-block rounded-lg bg-yellow-500/10 px-4 py-2 text-sm font-semibold text-yellow-300 transition hover:bg-yellow-500/20"
+                >
+                  View Academic Calendar →
+                </a>
+
+              </div>
+            )}
+
+          {/* ==================================================
+              ERROR
+          ================================================== */}
+
           {error && (
             <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+
               <p className="font-semibold text-red-300">
                 Analysis failed
               </p>
@@ -317,15 +464,23 @@ export default function UploadPage() {
               <pre className="mt-2 whitespace-pre-wrap text-sm text-red-400">
                 {error}
               </pre>
+
             </div>
           )}
+
         </section>
 
-        {/* Results */}
+        {/* ==================================================
+            RESULTS
+        ================================================== */}
+
         {result && (
           <div className="mt-10 space-y-6">
 
-            {/* AI Summary */}
+            {/* ==================================================
+                AI SUMMARY
+            ================================================== */}
+
             <section className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6">
 
               <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">
@@ -344,12 +499,28 @@ export default function UploadPage() {
 
             </section>
 
-            {/* Important Dates */}
+            {/* ==================================================
+                IMPORTANT DATES
+            ================================================== */}
+
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
-              <h2 className="text-xl font-semibold">
-                📅 Important Dates
-              </h2>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+
+                <h2 className="text-xl font-semibold">
+                  📅 Important Dates
+                </h2>
+
+                {result.important_dates.length > 0 && (
+                  <a
+                    href="/calendar"
+                    className="text-sm font-semibold text-blue-400 hover:text-blue-300"
+                  >
+                    View Calendar →
+                  </a>
+                )}
+
+              </div>
 
               <div className="mt-5 grid gap-4 md:grid-cols-2">
 
@@ -361,6 +532,7 @@ export default function UploadPage() {
                         key={index}
                         className="rounded-xl bg-slate-950 p-5"
                       >
+
                         <p className="font-semibold">
                           {item.title}
                         </p>
@@ -380,6 +552,7 @@ export default function UploadPage() {
                             📍 {item.location}
                           </p>
                         )}
+
                       </div>
                     )
                   )
@@ -390,9 +563,13 @@ export default function UploadPage() {
                 )}
 
               </div>
+
             </section>
 
-            {/* Tasks */}
+            {/* ==================================================
+                TASKS
+            ================================================== */}
+
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -421,9 +598,11 @@ export default function UploadPage() {
                       key={index}
                       className="rounded-xl bg-slate-950 p-5"
                     >
+
                       <div className="flex items-start justify-between gap-4">
 
                         <div className="min-w-0">
+
                           <p className="font-semibold">
                             {task.title}
                           </p>
@@ -438,6 +617,7 @@ export default function UploadPage() {
                               {task.deadline}
                             </p>
                           )}
+
                         </div>
 
                         <span
@@ -458,6 +638,7 @@ export default function UploadPage() {
                         </span>
 
                       </div>
+
                     </div>
                   ))
                 ) : (
@@ -467,9 +648,13 @@ export default function UploadPage() {
                 )}
 
               </div>
+
             </section>
 
-            {/* Requirements */}
+            {/* ==================================================
+                REQUIREMENTS
+            ================================================== */}
+
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
               <h2 className="text-xl font-semibold">
@@ -497,9 +682,13 @@ export default function UploadPage() {
                 )}
 
               </div>
+
             </section>
 
-            {/* Warnings */}
+            {/* ==================================================
+                WARNINGS
+            ================================================== */}
+
             {result.warnings &&
               result.warnings.length > 0 && (
                 <section className="rounded-2xl border border-orange-500/30 bg-orange-500/5 p-6">
@@ -522,10 +711,14 @@ export default function UploadPage() {
                     )}
 
                   </div>
+
                 </section>
               )}
 
-            {/* Suggested Actions */}
+            {/* ==================================================
+                SUGGESTED ACTIONS
+            ================================================== */}
+
             <section className="rounded-2xl border border-yellow-500/20 bg-yellow-500/5 p-6">
 
               <h2 className="text-xl font-semibold">
@@ -542,9 +735,11 @@ export default function UploadPage() {
                         key={index}
                         className="rounded-xl bg-slate-950 p-5"
                       >
+
                         <div className="flex items-start justify-between gap-4">
 
                           <div>
+
                             <p className="font-semibold">
                               {action.action}
                             </p>
@@ -552,6 +747,7 @@ export default function UploadPage() {
                             <p className="mt-2 text-sm text-slate-400">
                               {action.reason}
                             </p>
+
                           </div>
 
                           {action.requires_approval && (
@@ -561,6 +757,7 @@ export default function UploadPage() {
                           )}
 
                         </div>
+
                       </div>
                     )
                   )
@@ -571,10 +768,12 @@ export default function UploadPage() {
                 )}
 
               </div>
+
             </section>
 
           </div>
         )}
+
       </div>
     </main>
   );
