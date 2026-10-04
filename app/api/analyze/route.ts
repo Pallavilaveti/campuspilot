@@ -1,15 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
-import { analyzeNotice } from "@/lib/ai";
+import { NextResponse } from "next/server";
+import { analyzeNotice } from "@/lib/analyzeNotice";
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    console.log("=== CampusPilot Analyze API ===");
-
     const body = await request.json();
 
-    console.log("Received notice:", body?.text ? "YES" : "NO");
+    const text =
+      typeof body.text === "string"
+        ? body.text.trim()
+        : "";
 
-    if (!body?.text || typeof body.text !== "string") {
+    if (!text) {
       return NextResponse.json(
         {
           success: false,
@@ -19,29 +20,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("GEMINI_API_KEY exists:", !!process.env.GEMINI_API_KEY);
-
-    const analysis = await analyzeNotice(body.text);
-
-    console.log("Gemini analysis successful");
+    const analysis =
+      await analyzeNotice(text);
 
     return NextResponse.json({
       success: true,
       analysis,
     });
   } catch (error) {
-    console.error("=== CAMPUSPILOT API ERROR ===");
-    console.error(error);
-
-    const message =
-      error instanceof Error
-        ? error.message
-        : String(error);
+    console.error(
+      "CampusPilot /api/analyze error:",
+      error
+    );
 
     return NextResponse.json(
       {
         success: false,
-        error: message,
+        error:
+          error instanceof Error
+            ? error.message
+            : "AI analysis failed.",
       },
       { status: 500 }
     );

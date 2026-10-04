@@ -53,18 +53,127 @@ type EventToSave = {
 const TASK_STORAGE_KEY = "campuspilot_tasks";
 const EVENT_STORAGE_KEY = "campuspilot_events";
 
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function normalizeText(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function normalizeTaskTitle(title: string) {
+  let value = normalizeText(title);
+
+  /* Scheduling conflict */
+  if (
+    value.includes("scheduling conflict") ||
+    value.includes("schedule conflict")
+  ) {
+    return "scheduling conflict";
+  }
+
+  /* Institute ID */
+  if (
+    value.includes("institute id") ||
+    value.includes("institute identity") ||
+    value.includes("id card")
+  ) {
+    return "institute id card";
+  }
+
+  /* Admit card */
+  if (
+    value.includes("admit card") ||
+    value.includes("examination admit")
+  ) {
+    return "examination admit card";
+  }
+
+  /* Examination form */
+  if (
+    value.includes("examination form") ||
+    value.includes("exam form") ||
+    (value.includes("submit") && value.includes("form"))
+  ) {
+    return "examination form submission";
+  }
+
+  value = value
+    .replace(
+      /\b(ensure|carry|bring|have|keep|confirm|verify|check|report|submit|complete|prepare)\b/g,
+      ""
+    )
+    .replace(
+      /\b(possession of|physical possession and validity of)\b/g,
+      ""
+    )
+    .replace(
+      /\b(the|your|my|any|all|required|valid)\b/g,
+      ""
+    )
+    .replace(/\b(examination)\b/g, "exam")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return value;
+}
+
+function normalizeDate(value: string) {
+  return normalizeText(value);
+}
+
+function normalizePriority(priority: string) {
+  const value = priority?.toUpperCase().trim();
+
+  if (value === "URGENT") return "URGENT";
+  if (value === "HIGH") return "HIGH";
+  if (value === "MEDIUM") return "MEDIUM";
+  if (value === "LOW") return "LOW";
+
+  return "MEDIUM";
+}
+
+function generateId(prefix: string) {
+  return `${Date.now()}-${prefix}-${Math.random()
+    .toString(36)
+    .substring(2, 10)}`;
+}
+
+/* =========================================================
+   PAGE
+========================================================= */
+
 export default function UploadPage() {
   const [text, setText] = useState("");
-  const [result, setResult] = useState<Analysis | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
-  const [tasksSaved, setTasksSaved] = useState(0);
-  const [eventsSaved, setEventsSaved] = useState(0);
+  const [result, setResult] =
+    useState<Analysis | null>(null);
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [tasksSaved, setTasksSaved] =
+    useState(0);
+
+  const [eventsSaved, setEventsSaved] =
+    useState(0);
+
+  /* =======================================================
+     ANALYZE NOTICE
+  ======================================================= */
 
   async function analyze() {
     if (!text.trim()) {
-      setError("Please paste an academic notice first.");
+      setError(
+        "Please paste an academic notice first."
+      );
       return;
     }
 
@@ -75,29 +184,42 @@ export default function UploadPage() {
     setEventsSaved(0);
 
     try {
-      // ==================================================
-      // CALL AI API
-      // ==================================================
+      /* ===================================================
+         CALL BACKEND
+      =================================================== */
 
-      const response = await fetch("/api/analyze", {
-        method: "POST",
+      const response = await fetch(
+        "/api/analyze",
+        {
+          method: "POST",
 
-        headers: {
-          "Content-Type": "application/json",
-        },
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
 
-        body: JSON.stringify({
-          text: text.trim(),
-        }),
-      });
+          body: JSON.stringify({
+            text: text.trim(),
+          }),
+        }
+      );
 
-      // Read response as text first.
-      // This prevents JSON parsing errors if the server
-      // returns an empty response or HTML error page.
-      const rawResponse = await response.text();
+      /* ===================================================
+         READ RESPONSE
+      =================================================== */
 
-      console.log("API status:", response.status);
-      console.log("API response:", rawResponse);
+      const rawResponse =
+        await response.text();
+
+      console.log(
+        "CampusPilot API status:",
+        response.status
+      );
+
+      console.log(
+        "CampusPilot API response:",
+        rawResponse
+      );
 
       if (!rawResponse.trim()) {
         throw new Error(
@@ -112,13 +234,15 @@ export default function UploadPage() {
       };
 
       try {
-        data = JSON.parse(rawResponse);
+        data = JSON.parse(
+          rawResponse
+        );
       } catch {
         throw new Error(
-          `API did not return valid JSON.\n\nServer response:\n${rawResponse.slice(
-            0,
-            500
-          )}`
+          `API did not return valid JSON.
+
+Server response:
+${rawResponse.slice(0, 1000)}`
         );
       }
 
@@ -131,61 +255,128 @@ export default function UploadPage() {
 
       if (!data.analysis) {
         throw new Error(
-          data.error || "API response did not contain analysis."
+          data.error ||
+            "API response did not contain analysis."
         );
       }
 
-      // ==================================================
-      // AI ANALYSIS SUCCESS
-      // ==================================================
-
-      const analysis = data.analysis;
+      const analysis =
+        data.analysis;
 
       setResult(analysis);
 
-      // ==================================================
-      // PHASE 2
-      // SAVE TASKS
-      // ==================================================
+      /* ===================================================
+         SAVE TASKS
+      =================================================== */
 
-      const existingTasks: TaskToSave[] = JSON.parse(
-        localStorage.getItem(TASK_STORAGE_KEY) || "[]"
-      );
+      let existingTasks: TaskToSave[] = [];
 
-      const tasksFromAI = analysis.tasks || [];
+      try {
+        existingTasks =
+          JSON.parse(
+            localStorage.getItem(
+              TASK_STORAGE_KEY
+            ) || "[]"
+          );
+      } catch {
+        existingTasks = [];
+      }
 
-      const newTasks: TaskToSave[] = tasksFromAI.map(
-        (task, index) => ({
-          id: `${Date.now()}-task-${index}-${Math.random()
-            .toString(36)
-            .substring(2, 8)}`,
+      const tasksFromAI =
+        Array.isArray(
+          analysis.tasks
+        )
+          ? analysis.tasks
+          : [];
 
-          title: task.title,
+      const newTasks: TaskToSave[] =
+        tasksFromAI
+          .filter(
+            (task) =>
+              task &&
+              typeof task.title === "string" &&
+              task.title.trim()
+          )
+          .map((task) => ({
+            id: generateId("task"),
 
-          deadline: task.deadline || "",
+            title:
+              task.title.trim(),
 
-          priority: task.priority || "MEDIUM",
+            deadline:
+              task.deadline?.trim() || "",
 
-          reason: task.reason || "",
+            priority:
+              normalizePriority(
+                task.priority
+              ),
 
-          status: "PENDING",
+            reason:
+              task.reason?.trim() ||
+              "This task was identified from the academic notice.",
 
-          createdAt: new Date().toISOString(),
-        })
-      );
+            status: "PENDING",
 
-      // Prevent duplicate tasks
-      const uniqueNewTasks = newTasks.filter((newTask) => {
-        const alreadyExists = existingTasks.some(
-          (existingTask) =>
-            existingTask.title.trim().toLowerCase() ===
-              newTask.title.trim().toLowerCase() &&
-            existingTask.deadline.trim().toLowerCase() ===
-              newTask.deadline.trim().toLowerCase()
+            createdAt:
+              new Date().toISOString(),
+          }));
+
+      /* ===================================================
+         REMOVE DUPLICATE TASKS
+      =================================================== */
+
+      const uniqueNewTasks =
+        newTasks.filter(
+          (newTask, index, array) => {
+            const key =
+              `${normalizeTaskTitle(
+                newTask.title
+              )}|${normalizeDate(
+                newTask.deadline
+              )}`;
+
+            /* Duplicate inside current AI response */
+
+            const firstIndex =
+              array.findIndex(
+                (task) => {
+                  const taskKey =
+                    `${normalizeTaskTitle(
+                      task.title
+                    )}|${normalizeDate(
+                      task.deadline
+                    )}`;
+
+                  return (
+                    taskKey === key
+                  );
+                }
+              );
+
+            if (
+              firstIndex !== index
+            ) {
+              return false;
+            }
+
+            /* Duplicate already saved */
+
+            return !existingTasks.some(
+              (existingTask) => {
+                const existingKey =
+                  `${normalizeTaskTitle(
+                    existingTask.title
+                  )}|${normalizeDate(
+                    existingTask.deadline
+                  )}`;
+
+                return (
+                  existingKey === key
+                );
+              }
+            );
+          }
         );
-
-        return !alreadyExists;
-      });
 
       const updatedTasks = [
         ...existingTasks,
@@ -194,60 +385,140 @@ export default function UploadPage() {
 
       localStorage.setItem(
         TASK_STORAGE_KEY,
-        JSON.stringify(updatedTasks)
+        JSON.stringify(
+          updatedTasks
+        )
       );
 
-      setTasksSaved(uniqueNewTasks.length);
+      setTasksSaved(
+        uniqueNewTasks.length
+      );
 
       console.log(
-        `CampusPilot saved ${uniqueNewTasks.length} new task(s).`
+        `CampusPilot saved ${uniqueNewTasks.length} task(s).`
       );
 
-      // ==================================================
-      // PHASE 3
-      // SAVE IMPORTANT DATES AS CALENDAR EVENTS
-      // ==================================================
+      /* ===================================================
+         SAVE CALENDAR EVENTS
+      =================================================== */
 
-      const existingEvents: EventToSave[] = JSON.parse(
-        localStorage.getItem(EVENT_STORAGE_KEY) || "[]"
-      );
+      let existingEvents: EventToSave[] =
+        [];
 
-      const datesFromAI = analysis.important_dates || [];
-
-      const newEvents: EventToSave[] = datesFromAI
-        .filter((event) => event.date?.trim())
-        .map((event, index) => ({
-          id: `${Date.now()}-event-${index}-${Math.random()
-            .toString(36)
-            .substring(2, 8)}`,
-
-          title: event.title || "Academic Event",
-
-          date: event.date || "",
-
-          time: event.time || "",
-
-          location: event.location || "",
-
-          createdAt: new Date().toISOString(),
-        }));
-
-      // Prevent duplicate calendar events
-      const uniqueNewEvents = newEvents.filter(
-        (newEvent) => {
-          const alreadyExists = existingEvents.some(
-            (existingEvent) =>
-              existingEvent.title.trim().toLowerCase() ===
-                newEvent.title.trim().toLowerCase() &&
-              existingEvent.date.trim().toLowerCase() ===
-                newEvent.date.trim().toLowerCase() &&
-              existingEvent.time.trim().toLowerCase() ===
-                newEvent.time.trim().toLowerCase()
+      try {
+        existingEvents =
+          JSON.parse(
+            localStorage.getItem(
+              EVENT_STORAGE_KEY
+            ) || "[]"
           );
+      } catch {
+        existingEvents = [];
+      }
 
-          return !alreadyExists;
-        }
-      );
+      const datesFromAI =
+        Array.isArray(
+          analysis.important_dates
+        )
+          ? analysis.important_dates
+          : [];
+
+      const newEvents: EventToSave[] =
+        datesFromAI
+          .filter(
+            (event) =>
+              event &&
+              typeof event.date === "string" &&
+              event.date.trim()
+          )
+          .map((event) => ({
+            id: generateId("event"),
+
+            title:
+              event.title?.trim() ||
+              "Academic Event",
+
+            date:
+              event.date?.trim() || "",
+
+            time:
+              event.time?.trim() || "",
+
+            location:
+              event.location?.trim() || "",
+
+            createdAt:
+              new Date().toISOString(),
+          }));
+
+      /* ===================================================
+         REMOVE DUPLICATE EVENTS
+      =================================================== */
+
+      const uniqueNewEvents =
+        newEvents.filter(
+          (newEvent, index, array) => {
+            const key =
+              `${normalizeText(
+                newEvent.title
+              )}|${normalizeDate(
+                newEvent.date
+              )}|${normalizeDate(
+                newEvent.time
+              )}|${normalizeText(
+                newEvent.location
+              )}`;
+
+            /* Duplicate inside current AI response */
+
+            const firstIndex =
+              array.findIndex(
+                (event) => {
+                  const eventKey =
+                    `${normalizeText(
+                      event.title
+                    )}|${normalizeDate(
+                      event.date
+                    )}|${normalizeDate(
+                      event.time
+                    )}|${normalizeText(
+                      event.location
+                    )}`;
+
+                  return (
+                    eventKey === key
+                  );
+                }
+              );
+
+            if (
+              firstIndex !== index
+            ) {
+              return false;
+            }
+
+            /* Duplicate already in calendar */
+
+            return !existingEvents.some(
+              (existingEvent) => {
+                const existingKey =
+                  `${normalizeText(
+                    existingEvent.title
+                  )}|${normalizeDate(
+                    existingEvent.date
+                  )}|${normalizeDate(
+                    existingEvent.time
+                  )}|${normalizeText(
+                    existingEvent.location
+                  )}`;
+
+                return (
+                  existingKey === key
+                );
+              }
+            );
+          }
+        );
 
       const updatedEvents = [
         ...existingEvents,
@@ -256,26 +527,37 @@ export default function UploadPage() {
 
       localStorage.setItem(
         EVENT_STORAGE_KEY,
-        JSON.stringify(updatedEvents)
+        JSON.stringify(
+          updatedEvents
+        )
       );
 
-      setEventsSaved(uniqueNewEvents.length);
+      setEventsSaved(
+        uniqueNewEvents.length
+      );
 
       console.log(
-        `CampusPilot saved ${uniqueNewEvents.length} new calendar event(s).`
+        `CampusPilot saved ${uniqueNewEvents.length} calendar event(s).`
       );
-    } catch (error) {
-      console.error("Analysis error:", error);
+    } catch (err) {
+      console.error(
+        "CampusPilot analysis error:",
+        err
+      );
 
       setError(
-        error instanceof Error
-          ? error.message
+        err instanceof Error
+          ? err.message
           : "Something went wrong while analyzing the notice."
       );
     } finally {
       setLoading(false);
     }
   }
+
+  /* =======================================================
+     CLEAR
+  ======================================================= */
 
   function clearNotice() {
     setText("");
@@ -285,84 +567,204 @@ export default function UploadPage() {
     setEventsSaved(0);
   }
 
+  /* =======================================================
+     RENDER
+  ======================================================= */
+
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-12 text-white">
-      <div className="mx-auto max-w-6xl">
+    <main className="min-h-screen bg-slate-950 px-5 py-10 text-white md:px-8 md:py-12">
 
-        {/* ==================================================
+      <div className="mx-auto max-w-7xl">
+
+        {/* =================================================
             HEADER
-        ================================================== */}
+        ================================================= */}
 
-        <div className="mb-10">
-          <p className="mb-3 text-sm font-semibold uppercase tracking-wider text-blue-400">
-            CampusPilot AI Agent
+        <header className="mb-10">
+
+          <p className="mb-3 text-sm font-bold uppercase tracking-wider text-blue-400">
+            CAMPUSPILOT AI AGENT
           </p>
 
-          <h1 className="text-4xl font-bold">
+          <h1 className="text-4xl font-bold tracking-tight md:text-5xl">
             Analyze Academic Notice
           </h1>
 
-          <p className="mt-3 max-w-2xl text-slate-400">
-            CampusPilot understands your notice and identifies
-            what you need to do next.
+          <p className="mt-4 max-w-3xl text-base leading-7 text-slate-400 md:text-lg">
+            CampusPilot reads academic notices,
+            extracts deadlines and requirements,
+            creates actionable tasks, and decides
+            what you should focus on next.
           </p>
-        </div>
 
-        {/* ==================================================
-            NOTICE INPUT
-        ================================================== */}
+        </header>
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+        {/* =================================================
+            HOW IT WORKS
+        ================================================= */}
 
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">
-              Academic Notice
+        <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+            <div className="mb-5 text-3xl">
+              📄
+            </div>
+
+            <h2 className="text-lg font-bold">
+              Read Notice
             </h2>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Understand the academic announcement.
+            </p>
+
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+            <div className="mb-5 text-3xl">
+              🤖
+            </div>
+
+            <h2 className="text-lg font-bold">
+              AI Analysis
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Extract dates, tasks and requirements.
+            </p>
+
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+            <div className="mb-5 text-3xl">
+              🎯
+            </div>
+
+            <h2 className="text-lg font-bold">
+              Prioritize
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Determine what needs attention first.
+            </p>
+
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+            <div className="mb-5 text-3xl">
+              ✅
+            </div>
+
+            <h2 className="text-lg font-bold">
+              Take Action
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Save tasks and calendar events.
+            </p>
+
+          </div>
+
+        </section>
+
+        {/* =================================================
+            NOTICE INPUT
+        ================================================= */}
+
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6 md:p-7">
+
+          <div className="mb-5 flex items-center justify-between gap-4">
+
+            <div>
+
+              <h2 className="text-xl font-bold">
+                Academic Notice
+              </h2>
+
+              <p className="mt-2 text-sm text-slate-500">
+                Paste the content of your academic notice below.
+              </p>
+
+            </div>
 
             {text && (
               <button
                 type="button"
                 onClick={clearNotice}
-                className="text-sm text-slate-400 transition hover:text-white"
+                className="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-800 hover:text-white"
               >
                 Clear
               </button>
             )}
+
           </div>
 
           <textarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) =>
+              setText(e.target.value)
+            }
             placeholder="Paste the examination notice, assignment notice, college circular, or announcement here..."
-            className="h-72 w-full resize-none rounded-xl border border-slate-800 bg-slate-950 p-5 text-white outline-none placeholder:text-slate-600 focus:border-blue-500"
+            className="h-72 w-full resize-none rounded-xl border border-slate-800 bg-slate-950 p-5 text-sm leading-6 text-white outline-none transition placeholder:text-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
           />
 
-          <button
-            type="button"
-            onClick={analyze}
-            disabled={loading}
-            className="mt-5 rounded-xl bg-blue-500 px-7 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading
-              ? "🤖 Analyzing..."
-              : "✨ Analyze Notice"}
-          </button>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
 
-          {/* ==================================================
-              SUCCESS MESSAGES
-          ================================================== */}
+            <button
+              type="button"
+              onClick={analyze}
+              disabled={loading}
+              className="rounded-xl bg-blue-500 px-7 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading
+                ? "🤖 Analyzing..."
+                : "✨ Analyze Notice"}
+            </button>
+
+            {loading && (
+              <span className="text-sm text-slate-500">
+                CampusPilot AI is reading your notice...
+              </span>
+            )}
+
+          </div>
+
+          {/* =================================================
+              ERROR
+          ================================================= */}
+
+          {error && (
+            <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 p-5">
+
+              <p className="font-semibold text-red-300">
+                Analysis failed
+              </p>
+
+              <pre className="mt-2 whitespace-pre-wrap text-sm leading-6 text-red-400">
+                {error}
+              </pre>
+
+            </div>
+          )}
+
+          {/* =================================================
+              TASK SUCCESS
+          ================================================= */}
 
           {tasksSaved > 0 && (
-            <div className="mt-5 rounded-xl border border-green-500/30 bg-green-500/10 p-4">
+            <div className="mt-5 rounded-xl border border-green-500/30 bg-green-500/10 p-5">
 
               <p className="font-semibold text-green-300">
                 ✓ {tasksSaved} task
-                {tasksSaved !== 1 ? "s" : ""} added to
-                CampusPilot
+                {tasksSaved !== 1 ? "s" : ""} added to CampusPilot
               </p>
 
               <p className="mt-1 text-sm text-green-400">
-                Open the Tasks page to manage them.
+                Your actionable tasks are now available in Task Management.
               </p>
 
               <a
@@ -375,8 +777,12 @@ export default function UploadPage() {
             </div>
           )}
 
+          {/* =================================================
+              EVENT SUCCESS
+          ================================================= */}
+
           {eventsSaved > 0 && (
-            <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
+            <div className="mt-4 rounded-xl border border-blue-500/30 bg-blue-500/10 p-5">
 
               <p className="font-semibold text-blue-300">
                 📅 {eventsSaved} calendar event
@@ -384,8 +790,7 @@ export default function UploadPage() {
               </p>
 
               <p className="mt-1 text-sm text-blue-400">
-                Important dates from this notice have been
-                added to your academic calendar.
+                Important dates from the notice were added to your academic calendar.
               </p>
 
               <a
@@ -398,92 +803,44 @@ export default function UploadPage() {
             </div>
           )}
 
-          {/* No new tasks */}
+          {/* =================================================
+              NOTHING NEW
+          ================================================= */}
+
           {!loading &&
             result &&
-            result.tasks.length > 0 &&
-            tasksSaved === 0 && (
-              <div className="mt-5 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
-
-                <p className="font-semibold text-yellow-300">
-                  ℹ️ No new tasks were added
-                </p>
-
-                <p className="mt-1 text-sm text-yellow-400">
-                  These tasks may already exist in your
-                  Task Management list.
-                </p>
-
-                <a
-                  href="/tasks"
-                  className="mt-3 inline-block rounded-lg bg-yellow-500/10 px-4 py-2 text-sm font-semibold text-yellow-300 transition hover:bg-yellow-500/20"
-                >
-                  View My Tasks →
-                </a>
-
-              </div>
-            )}
-
-          {/* No new events */}
-          {!loading &&
-            result &&
-            result.important_dates.length > 0 &&
+            tasksSaved === 0 &&
             eventsSaved === 0 && (
-              <div className="mt-4 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+              <div className="mt-5 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-5">
 
                 <p className="font-semibold text-yellow-300">
-                  ℹ️ No new calendar events were added
+                  ✓ Notice analyzed
                 </p>
 
                 <p className="mt-1 text-sm text-yellow-400">
-                  These dates may already exist in your
-                  Academic Calendar.
+                  No new tasks or calendar events were added.
+                  They may already exist in CampusPilot.
                 </p>
-
-                <a
-                  href="/calendar"
-                  className="mt-3 inline-block rounded-lg bg-yellow-500/10 px-4 py-2 text-sm font-semibold text-yellow-300 transition hover:bg-yellow-500/20"
-                >
-                  View Academic Calendar →
-                </a>
 
               </div>
             )}
-
-          {/* ==================================================
-              ERROR
-          ================================================== */}
-
-          {error && (
-            <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4">
-
-              <p className="font-semibold text-red-300">
-                Analysis failed
-              </p>
-
-              <pre className="mt-2 whitespace-pre-wrap text-sm text-red-400">
-                {error}
-              </pre>
-
-            </div>
-          )}
 
         </section>
 
-        {/* ==================================================
+        {/* =================================================
             RESULTS
-        ================================================== */}
+        ================================================= */}
 
         {result && (
           <div className="mt-10 space-y-6">
 
-            {/* ==================================================
-                AI SUMMARY
-            ================================================== */}
+            {/* =================================================
+                SUMMARY
+            ================================================= */}
 
             <section className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6">
 
-              <p className="text-xs font-semibold uppercase tracking-wider text-blue-400">
+              <p className="text-xs font-bold uppercase tracking-wider text-blue-400">
                 AI Summary
               </p>
 
@@ -492,26 +849,26 @@ export default function UploadPage() {
               </h2>
 
               {result.category && (
-                <p className="mt-3 inline-block rounded-full bg-blue-500/10 px-3 py-1 text-sm text-blue-300">
+                <span className="mt-4 inline-block rounded-full bg-blue-500/10 px-3 py-1 text-sm text-blue-300">
                   {result.category}
-                </p>
+                </span>
               )}
 
             </section>
 
-            {/* ==================================================
+            {/* =================================================
                 IMPORTANT DATES
-            ================================================== */}
+            ================================================= */}
 
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 
-                <h2 className="text-xl font-semibold">
+                <h2 className="text-xl font-bold">
                   📅 Important Dates
                 </h2>
 
-                {result.important_dates.length > 0 && (
+                {result.important_dates?.length > 0 && (
                   <a
                     href="/calendar"
                     className="text-sm font-semibold text-blue-400 hover:text-blue-300"
@@ -524,8 +881,7 @@ export default function UploadPage() {
 
               <div className="mt-5 grid gap-4 md:grid-cols-2">
 
-                {result.important_dates &&
-                result.important_dates.length > 0 ? (
+                {result.important_dates?.length > 0 ? (
                   result.important_dates.map(
                     (item, index) => (
                       <div
@@ -542,7 +898,7 @@ export default function UploadPage() {
                         </p>
 
                         {item.time && (
-                          <p className="mt-1 text-sm text-slate-400">
+                          <p className="mt-2 text-sm text-slate-400">
                             🕐 {item.time}
                           </p>
                         )}
@@ -566,19 +922,19 @@ export default function UploadPage() {
 
             </section>
 
-            {/* ==================================================
+            {/* =================================================
                 TASKS
-            ================================================== */}
+            ================================================= */}
 
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 
-                <h2 className="text-xl font-semibold">
+                <h2 className="text-xl font-bold">
                   ✅ Actionable Tasks
                 </h2>
 
-                {result.tasks.length > 0 && (
+                {result.tasks?.length > 0 && (
                   <a
                     href="/tasks"
                     className="text-sm font-semibold text-blue-400 hover:text-blue-300"
@@ -591,56 +947,56 @@ export default function UploadPage() {
 
               <div className="mt-5 space-y-3">
 
-                {result.tasks &&
-                result.tasks.length > 0 ? (
-                  result.tasks.map((task, index) => (
-                    <div
-                      key={index}
-                      className="rounded-xl bg-slate-950 p-5"
-                    >
+                {result.tasks?.length > 0 ? (
+                  result.tasks.map(
+                    (task, index) => (
+                      <div
+                        key={index}
+                        className="rounded-xl bg-slate-950 p-5"
+                      >
 
-                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
 
-                        <div className="min-w-0">
+                          <div className="min-w-0">
 
-                          <p className="font-semibold">
-                            {task.title}
-                          </p>
-
-                          <p className="mt-2 text-sm text-slate-400">
-                            {task.reason}
-                          </p>
-
-                          {task.deadline && (
-                            <p className="mt-3 text-sm text-blue-400">
-                              ⏰ Deadline:{" "}
-                              {task.deadline}
+                            <p className="font-semibold">
+                              {task.title}
                             </p>
-                          )}
+
+                            <p className="mt-2 text-sm leading-6 text-slate-400">
+                              {task.reason}
+                            </p>
+
+                            {task.deadline && (
+                              <p className="mt-3 text-sm text-blue-400">
+                                ⏰ Deadline: {task.deadline}
+                              </p>
+                            )}
+
+                          </div>
+
+                          <span
+                            className={`w-fit shrink-0 rounded-full px-3 py-1 text-xs font-bold ${
+                              task.priority?.toUpperCase() ===
+                              "URGENT"
+                                ? "bg-red-500/10 text-red-300"
+                                : task.priority?.toUpperCase() ===
+                                  "HIGH"
+                                ? "bg-orange-500/10 text-orange-300"
+                                : task.priority?.toUpperCase() ===
+                                  "MEDIUM"
+                                ? "bg-yellow-500/10 text-yellow-300"
+                                : "bg-green-500/10 text-green-300"
+                            }`}
+                          >
+                            {task.priority || "MEDIUM"}
+                          </span>
 
                         </div>
 
-                        <span
-                          className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
-                            task.priority.toUpperCase() ===
-                            "URGENT"
-                              ? "bg-red-500/10 text-red-300"
-                              : task.priority.toUpperCase() ===
-                                "HIGH"
-                              ? "bg-orange-500/10 text-orange-300"
-                              : task.priority.toUpperCase() ===
-                                "MEDIUM"
-                              ? "bg-yellow-500/10 text-yellow-300"
-                              : "bg-green-500/10 text-green-300"
-                          }`}
-                        >
-                          {task.priority}
-                        </span>
-
                       </div>
-
-                    </div>
-                  ))
+                    )
+                  )
                 ) : (
                   <p className="text-slate-500">
                     No tasks detected.
@@ -651,25 +1007,24 @@ export default function UploadPage() {
 
             </section>
 
-            {/* ==================================================
+            {/* =================================================
                 REQUIREMENTS
-            ================================================== */}
+            ================================================= */}
 
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
-              <h2 className="text-xl font-semibold">
+              <h2 className="text-xl font-bold">
                 📋 Requirements
               </h2>
 
-              <div className="mt-4 space-y-3">
+              <div className="mt-5 space-y-3">
 
-                {result.requirements &&
-                result.requirements.length > 0 ? (
+                {result.requirements?.length > 0 ? (
                   result.requirements.map(
                     (item, index) => (
                       <div
                         key={index}
-                        className="rounded-xl bg-slate-950 p-4"
+                        className="rounded-xl bg-slate-950 p-4 text-sm text-slate-300"
                       >
                         ✓ {item}
                       </div>
@@ -685,50 +1040,48 @@ export default function UploadPage() {
 
             </section>
 
-            {/* ==================================================
+            {/* =================================================
                 WARNINGS
-            ================================================== */}
+            ================================================= */}
 
-            {result.warnings &&
-              result.warnings.length > 0 && (
-                <section className="rounded-2xl border border-orange-500/30 bg-orange-500/5 p-6">
+            {result.warnings?.length > 0 && (
+              <section className="rounded-2xl border border-orange-500/30 bg-orange-500/5 p-6">
 
-                  <h2 className="text-xl font-semibold text-orange-300">
-                    ⚠️ Warnings & Conflicts
-                  </h2>
+                <h2 className="text-xl font-bold text-orange-300">
+                  ⚠️ Warnings & Conflicts
+                </h2>
 
-                  <div className="mt-4 space-y-3">
+                <div className="mt-5 space-y-3">
 
-                    {result.warnings.map(
-                      (warning, index) => (
-                        <div
-                          key={index}
-                          className="rounded-xl bg-slate-950 p-4 text-orange-200"
-                        >
-                          {warning}
-                        </div>
-                      )
-                    )}
+                  {result.warnings.map(
+                    (warning, index) => (
+                      <div
+                        key={index}
+                        className="rounded-xl bg-slate-950 p-4 text-sm leading-6 text-orange-200"
+                      >
+                        {warning}
+                      </div>
+                    )
+                  )}
 
-                  </div>
+                </div>
 
-                </section>
-              )}
+              </section>
+            )}
 
-            {/* ==================================================
+            {/* =================================================
                 SUGGESTED ACTIONS
-            ================================================== */}
+            ================================================= */}
 
             <section className="rounded-2xl border border-yellow-500/20 bg-yellow-500/5 p-6">
 
-              <h2 className="text-xl font-semibold">
+              <h2 className="text-xl font-bold">
                 🤖 Suggested Actions
               </h2>
 
               <div className="mt-5 space-y-3">
 
-                {result.suggested_actions &&
-                result.suggested_actions.length > 0 ? (
+                {result.suggested_actions?.length > 0 ? (
                   result.suggested_actions.map(
                     (action, index) => (
                       <div
@@ -736,7 +1089,7 @@ export default function UploadPage() {
                         className="rounded-xl bg-slate-950 p-5"
                       >
 
-                        <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
 
                           <div>
 
@@ -744,14 +1097,14 @@ export default function UploadPage() {
                               {action.action}
                             </p>
 
-                            <p className="mt-2 text-sm text-slate-400">
+                            <p className="mt-2 text-sm leading-6 text-slate-400">
                               {action.reason}
                             </p>
 
                           </div>
 
                           {action.requires_approval && (
-                            <span className="shrink-0 rounded-full bg-yellow-500/10 px-3 py-1 text-xs text-yellow-300">
+                            <span className="w-fit shrink-0 rounded-full bg-yellow-500/10 px-3 py-1 text-xs font-semibold text-yellow-300">
                               🔐 Human approval required
                             </span>
                           )}
@@ -773,6 +1126,35 @@ export default function UploadPage() {
 
           </div>
         )}
+
+        {/* =================================================
+            NAVIGATION
+        ================================================= */}
+
+        <div className="mt-10 flex flex-wrap gap-3">
+
+          <a
+            href="/"
+            className="rounded-xl border border-slate-800 px-5 py-3 text-sm font-semibold text-slate-300 transition hover:bg-slate-900 hover:text-white"
+          >
+            ← Dashboard
+          </a>
+
+          <a
+            href="/tasks"
+            className="rounded-xl border border-slate-800 px-5 py-3 text-sm font-semibold text-slate-300 transition hover:bg-slate-900 hover:text-white"
+          >
+            🎯 Task Management
+          </a>
+
+          <a
+            href="/calendar"
+            className="rounded-xl border border-slate-800 px-5 py-3 text-sm font-semibold text-slate-300 transition hover:bg-slate-900 hover:text-white"
+          >
+            📅 Academic Calendar
+          </a>
+
+        </div>
 
       </div>
     </main>

@@ -1,5 +1,3 @@
-export type Priority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
-
 export type CampusAnalysis = {
   summary: string;
   category: string;
@@ -7,14 +5,14 @@ export type CampusAnalysis = {
   important_dates: {
     title: string;
     date: string;
-    time: string;
-    location: string;
+    time?: string;
+    location?: string;
   }[];
 
   tasks: {
     title: string;
-    deadline: string;
-    priority: Priority;
+    deadline?: string;
+    priority: string;
     reason: string;
   }[];
 
