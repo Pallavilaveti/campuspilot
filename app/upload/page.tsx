@@ -31,11 +31,24 @@ type Analysis = {
   }[];
 };
 
+type TaskToSave = {
+  id: string;
+  title: string;
+  deadline: string;
+  priority: string;
+  reason: string;
+  status: "PENDING" | "COMPLETED";
+  createdAt: string;
+};
+
+const TASK_STORAGE_KEY = "campuspilot_tasks";
+
 export default function UploadPage() {
   const [text, setText] = useState("");
   const [result, setResult] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [tasksSaved, setTasksSaved] = useState(0);
 
   async function analyze() {
     if (!text.trim()) {
@@ -46,6 +59,7 @@ export default function UploadPage() {
     setLoading(true);
     setError("");
     setResult(null);
+    setTasksSaved(0);
 
     try {
       const response = await fetch("/api/analyze", {
@@ -58,8 +72,9 @@ export default function UploadPage() {
         }),
       });
 
-      // Read the response as text first.
-      // This prevents "Unexpected end of JSON input".
+      // Read response as text first.
+      // This prevents JSON parsing errors when the API returns
+      // an empty response or an HTML error page.
       const rawResponse = await response.text();
 
       console.log("API status:", response.status);
@@ -101,7 +116,74 @@ export default function UploadPage() {
         );
       }
 
+      // --------------------------------------------------
+      // AI ANALYSIS SUCCESS
+      // --------------------------------------------------
+
       setResult(data.analysis);
+
+      // --------------------------------------------------
+      // PHASE 2:
+      // SAVE EXTRACTED TASKS TO LOCAL STORAGE
+      // --------------------------------------------------
+
+      const existingTasks: TaskToSave[] = JSON.parse(
+        localStorage.getItem(TASK_STORAGE_KEY) || "[]"
+      );
+
+      const tasksFromAI = data.analysis.tasks || [];
+
+      const newTasks: TaskToSave[] = tasksFromAI.map(
+        (task, index) => ({
+          id: `${Date.now()}-${index}-${Math.random()
+            .toString(36)
+            .substring(2, 8)}`,
+
+          title: task.title,
+
+          deadline: task.deadline || "",
+
+          priority: task.priority || "MEDIUM",
+
+          reason: task.reason || "",
+
+          status: "PENDING",
+
+          createdAt: new Date().toISOString(),
+        })
+      );
+
+      // --------------------------------------------------
+      // PREVENT EXACT DUPLICATE TASKS
+      // --------------------------------------------------
+
+      const uniqueNewTasks = newTasks.filter((newTask) => {
+        const alreadyExists = existingTasks.some(
+          (existingTask) =>
+            existingTask.title.trim().toLowerCase() ===
+              newTask.title.trim().toLowerCase() &&
+            existingTask.deadline.trim().toLowerCase() ===
+              newTask.deadline.trim().toLowerCase()
+        );
+
+        return !alreadyExists;
+      });
+
+      const updatedTasks = [
+        ...existingTasks,
+        ...uniqueNewTasks,
+      ];
+
+      localStorage.setItem(
+        TASK_STORAGE_KEY,
+        JSON.stringify(updatedTasks)
+      );
+
+      setTasksSaved(uniqueNewTasks.length);
+
+      console.log(
+        `CampusPilot saved ${uniqueNewTasks.length} new task(s).`
+      );
     } catch (error) {
       console.error("Analysis error:", error);
 
@@ -119,6 +201,7 @@ export default function UploadPage() {
     setText("");
     setResult(null);
     setError("");
+    setTasksSaved(0);
   }
 
   return (
@@ -173,8 +256,56 @@ export default function UploadPage() {
             disabled={loading}
             className="mt-5 rounded-xl bg-blue-500 px-7 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? "🤖 Analyzing..." : "✨ Analyze Notice"}
+            {loading
+              ? "🤖 Analyzing..."
+              : "✨ Analyze Notice"}
           </button>
+
+          {/* Tasks Saved Message */}
+          {tasksSaved > 0 && (
+            <div className="mt-5 rounded-xl border border-green-500/30 bg-green-500/10 p-4">
+              <p className="font-semibold text-green-300">
+                ✓ {tasksSaved} task
+                {tasksSaved !== 1 ? "s" : ""} added to
+                CampusPilot
+              </p>
+
+              <p className="mt-1 text-sm text-green-400">
+                Open the Tasks page to manage them.
+              </p>
+
+              <a
+                href="/tasks"
+                className="mt-3 inline-block rounded-lg bg-green-500/10 px-4 py-2 text-sm font-semibold text-green-300 transition hover:bg-green-500/20"
+              >
+                View My Tasks →
+              </a>
+            </div>
+          )}
+
+          {/* No new tasks */}
+          {!loading &&
+            result &&
+            result.tasks.length > 0 &&
+            tasksSaved === 0 && (
+              <div className="mt-5 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+                <p className="font-semibold text-yellow-300">
+                  ℹ️ No new tasks were added
+                </p>
+
+                <p className="mt-1 text-sm text-yellow-400">
+                  These tasks may already exist in your
+                  Task Management list.
+                </p>
+
+                <a
+                  href="/tasks"
+                  className="mt-3 inline-block rounded-lg bg-yellow-500/10 px-4 py-2 text-sm font-semibold text-yellow-300 transition hover:bg-yellow-500/20"
+                >
+                  View My Tasks →
+                </a>
+              </div>
+            )}
 
           {/* Error */}
           {error && (
@@ -210,6 +341,7 @@ export default function UploadPage() {
                   {result.category}
                 </p>
               )}
+
             </section>
 
             {/* Important Dates */}
@@ -223,32 +355,34 @@ export default function UploadPage() {
 
                 {result.important_dates &&
                 result.important_dates.length > 0 ? (
-                  result.important_dates.map((item, index) => (
-                    <div
-                      key={index}
-                      className="rounded-xl bg-slate-950 p-5"
-                    >
-                      <p className="font-semibold">
-                        {item.title}
-                      </p>
-
-                      <p className="mt-2 text-blue-400">
-                        {item.date}
-                      </p>
-
-                      {item.time && (
-                        <p className="mt-1 text-sm text-slate-400">
-                          🕐 {item.time}
+                  result.important_dates.map(
+                    (item, index) => (
+                      <div
+                        key={index}
+                        className="rounded-xl bg-slate-950 p-5"
+                      >
+                        <p className="font-semibold">
+                          {item.title}
                         </p>
-                      )}
 
-                      {item.location && (
-                        <p className="mt-1 text-sm text-slate-400">
-                          📍 {item.location}
+                        <p className="mt-2 text-blue-400">
+                          {item.date}
                         </p>
-                      )}
-                    </div>
-                  ))
+
+                        {item.time && (
+                          <p className="mt-1 text-sm text-slate-400">
+                            🕐 {item.time}
+                          </p>
+                        )}
+
+                        {item.location && (
+                          <p className="mt-1 text-sm text-slate-400">
+                            📍 {item.location}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  )
                 ) : (
                   <p className="text-slate-500">
                     No important dates detected.
@@ -261,13 +395,27 @@ export default function UploadPage() {
             {/* Tasks */}
             <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
-              <h2 className="text-xl font-semibold">
-                ✅ Actionable Tasks
-              </h2>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+
+                <h2 className="text-xl font-semibold">
+                  ✅ Actionable Tasks
+                </h2>
+
+                {result.tasks.length > 0 && (
+                  <a
+                    href="/tasks"
+                    className="text-sm font-semibold text-blue-400 hover:text-blue-300"
+                  >
+                    Manage all tasks →
+                  </a>
+                )}
+
+              </div>
 
               <div className="mt-5 space-y-3">
 
-                {result.tasks && result.tasks.length > 0 ? (
+                {result.tasks &&
+                result.tasks.length > 0 ? (
                   result.tasks.map((task, index) => (
                     <div
                       key={index}
@@ -286,12 +434,26 @@ export default function UploadPage() {
 
                           {task.deadline && (
                             <p className="mt-3 text-sm text-blue-400">
-                              ⏰ Deadline: {task.deadline}
+                              ⏰ Deadline:{" "}
+                              {task.deadline}
                             </p>
                           )}
                         </div>
 
-                        <span className="shrink-0 rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300">
+                        <span
+                          className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                            task.priority.toUpperCase() ===
+                            "URGENT"
+                              ? "bg-red-500/10 text-red-300"
+                              : task.priority.toUpperCase() ===
+                                "HIGH"
+                              ? "bg-orange-500/10 text-orange-300"
+                              : task.priority.toUpperCase() ===
+                                "MEDIUM"
+                              ? "bg-yellow-500/10 text-yellow-300"
+                              : "bg-green-500/10 text-green-300"
+                          }`}
+                        >
                           {task.priority}
                         </span>
 
@@ -318,14 +480,16 @@ export default function UploadPage() {
 
                 {result.requirements &&
                 result.requirements.length > 0 ? (
-                  result.requirements.map((item, index) => (
-                    <div
-                      key={index}
-                      className="rounded-xl bg-slate-950 p-4"
-                    >
-                      ✓ {item}
-                    </div>
-                  ))
+                  result.requirements.map(
+                    (item, index) => (
+                      <div
+                        key={index}
+                        className="rounded-xl bg-slate-950 p-4"
+                      >
+                        ✓ {item}
+                      </div>
+                    )
+                  )
                 ) : (
                   <p className="text-slate-500">
                     No specific requirements detected.
