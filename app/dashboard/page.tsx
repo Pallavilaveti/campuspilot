@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  getSession,
+  requireAuth,
+  logout,
+  type CampusPilotSession,
+} from "@/lib/auth";
 
 type Task = {
   id: string;
@@ -22,37 +29,113 @@ type CalendarEvent = {
 };
 
 const TASK_STORAGE_KEY = "campuspilot_tasks";
-const CALENDAR_STORAGE_KEY = "campuspilot_calendar_events";
+const CALENDAR_STORAGE_KEY = "campuspilot_events";
 
 export default function DashboardPage() {
+  const router = useRouter();
+
   const [tasks, setTasks] = useState<Task[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [session, setSession] = useState<CampusPilotSession | null>(
+    null
+  );
+  const [authChecking, setAuthChecking] = useState(true);
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
-  function loadDashboardData() {
+  const loadDashboardData = useCallback(() => {
     try {
       const storedTasks = localStorage.getItem(TASK_STORAGE_KEY);
       const storedEvents = localStorage.getItem(
         CALENDAR_STORAGE_KEY
       );
 
-      if (storedTasks) {
-        setTasks(JSON.parse(storedTasks));
-      }
+      const parsedTasks: Task[] = storedTasks
+        ? JSON.parse(storedTasks)
+        : [];
 
-      if (storedEvents) {
-        setEvents(JSON.parse(storedEvents));
-      }
+      const parsedEvents: CalendarEvent[] = storedEvents
+        ? JSON.parse(storedEvents)
+        : [];
+
+      setTasks(Array.isArray(parsedTasks) ? parsedTasks : []);
+      setEvents(Array.isArray(parsedEvents) ? parsedEvents : []);
     } catch (error) {
       console.error(
         "Failed to load dashboard data:",
         error
       );
+
+      setTasks([]);
+      setEvents([]);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const authenticated = requireAuth();
+
+    if (!authenticated) {
+      return;
+    }
+
+    const currentSession = getSession();
+
+    if (!currentSession) {
+      router.replace("/login");
+      return;
+    }
+
+    setSession(currentSession);
+    setAuthChecking(false);
+
+    loadDashboardData();
+
+    const handleStorageChange = () => {
+      loadDashboardData();
+
+      const updatedSession = getSession();
+
+      if (updatedSession) {
+        setSession(updatedSession);
+      }
+    };
+
+    const handleFocus = () => {
+      loadDashboardData();
+
+      const updatedSession = getSession();
+
+      if (updatedSession) {
+        setSession(updatedSession);
+      }
+    };
+
+    window.addEventListener(
+      "storage",
+      handleStorageChange
+    );
+
+    window.addEventListener(
+      "focus",
+      handleFocus
+    );
+
+    return () => {
+      window.removeEventListener(
+        "storage",
+        handleStorageChange
+      );
+
+      window.removeEventListener(
+        "focus",
+        handleFocus
+      );
+    };
+  }, [loadDashboardData, router]);
+
+  const handleLogout = () => {
+    logout();
+
+    router.replace("/login");
+  };
 
   const pendingTasks = useMemo(
     () =>
@@ -74,7 +157,7 @@ export default function DashboardPage() {
     () =>
       pendingTasks.filter(
         (task) =>
-          task.priority.toUpperCase() === "URGENT"
+          task.priority?.toUpperCase() === "URGENT"
       ),
     [pendingTasks]
   );
@@ -83,7 +166,7 @@ export default function DashboardPage() {
     () =>
       pendingTasks.filter(
         (task) =>
-          task.priority.toUpperCase() === "HIGH"
+          task.priority?.toUpperCase() === "HIGH"
       ),
     [pendingTasks]
   );
@@ -101,6 +184,7 @@ export default function DashboardPage() {
 
   const upcomingEvents = useMemo(() => {
     return [...events]
+      .filter((event) => event.date)
       .sort(
         (a, b) =>
           new Date(a.date).getTime() -
@@ -179,7 +263,7 @@ export default function DashboardPage() {
   }
 
   function priorityClass(priority: string) {
-    switch (priority.toUpperCase()) {
+    switch (priority?.toUpperCase()) {
       case "URGENT":
         return "bg-red-500/10 text-red-300";
 
@@ -194,30 +278,93 @@ export default function DashboardPage() {
     }
   }
 
+  /*
+   * Prevent the dashboard from briefly showing
+   * protected content while authentication is checked.
+   */
+  if (authChecking) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+        <div className="text-center">
+          <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-blue-500"></div>
+
+          <p className="mt-4 text-sm text-slate-400">
+            Loading CampusPilot...
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-white">
       <div className="mx-auto max-w-7xl">
 
-        {/* Header */}
-        <div className="mb-10">
-          <p className="text-sm font-semibold uppercase tracking-wider text-blue-400">
-            CampusPilot
-          </p>
+        {/* HEADER */}
+        <div className="mb-10 flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
 
-          <h1 className="mt-2 text-4xl font-bold">
-            Student Dashboard
-          </h1>
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wider text-blue-400">
+              CampusPilot
+            </p>
 
-          <p className="mt-3 text-slate-400">
-            Your academic tasks, deadlines, events,
-            and next best actions in one place.
-          </p>
+            <h1 className="mt-2 text-4xl font-bold">
+              Student Dashboard
+            </h1>
+
+            <p className="mt-3 text-slate-400">
+              Your academic tasks, deadlines, events, and
+              next best actions in one place.
+            </p>
+          </div>
+
+          {/* STUDENT PROFILE */}
+          <div className="flex items-center gap-3">
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 px-5 py-3">
+
+              <p className="text-sm font-semibold text-white">
+                {session?.name || "Student"}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-400">
+                {session?.studentId || "Student"}
+              </p>
+
+            </div>
+
+            <button
+              onClick={handleLogout}
+              className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/10"
+            >
+              Logout
+            </button>
+
+          </div>
         </div>
 
-        {/* Stats */}
+        {/* WELCOME */}
+        <section className="mb-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-5">
+
+          <p className="text-sm text-slate-400">
+            Welcome back,
+          </p>
+
+          <h2 className="mt-1 text-2xl font-bold">
+            {session?.name || "Student"} 👋
+          </h2>
+
+          <p className="mt-2 text-sm text-slate-400">
+            Here&apos;s what needs your attention today.
+          </p>
+
+        </section>
+
+        {/* STATS */}
         <section className="grid gap-4 md:grid-cols-4">
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
             <p className="text-sm text-slate-400">
               Pending Tasks
             </p>
@@ -225,9 +372,11 @@ export default function DashboardPage() {
             <p className="mt-2 text-3xl font-bold">
               {pendingTasks.length}
             </p>
+
           </div>
 
           <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-6">
+
             <p className="text-sm text-red-300">
               Urgent Tasks
             </p>
@@ -235,9 +384,11 @@ export default function DashboardPage() {
             <p className="mt-2 text-3xl font-bold text-red-300">
               {urgentTasks.length}
             </p>
+
           </div>
 
           <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-6">
+
             <p className="text-sm text-blue-300">
               Upcoming Events
             </p>
@@ -245,9 +396,11 @@ export default function DashboardPage() {
             <p className="mt-2 text-3xl font-bold">
               {events.length}
             </p>
+
           </div>
 
           <div className="rounded-2xl border border-green-500/20 bg-green-500/5 p-6">
+
             <p className="text-sm text-green-300">
               Completed Tasks
             </p>
@@ -255,11 +408,12 @@ export default function DashboardPage() {
             <p className="mt-2 text-3xl font-bold">
               {completedTasks.length}
             </p>
+
           </div>
 
         </section>
 
-        {/* Agent Recommendation */}
+        {/* AGENT RECOMMENDATION */}
         <section className="mt-6 rounded-2xl border border-purple-500/30 bg-purple-500/5 p-6">
 
           <div className="flex items-start gap-4">
@@ -268,7 +422,8 @@ export default function DashboardPage() {
               🤖
             </div>
 
-            <div>
+            <div className="flex-1">
+
               <p className="text-xs font-semibold uppercase tracking-wider text-purple-400">
                 CampusPilot Agent
               </p>
@@ -295,18 +450,30 @@ export default function DashboardPage() {
 
                   {nextAction.deadline && (
                     <p className="mt-3 text-sm text-purple-300">
-                      ⏰ {getDaysRemaining(
+                      ⏰{" "}
+                      {getDaysRemaining(
                         nextAction.deadline
                       )}
                     </p>
                   )}
 
-                  <a
-                    href="/tasks"
-                    className="mt-4 inline-block rounded-lg bg-purple-500 px-4 py-2 text-sm font-semibold hover:bg-purple-400"
-                  >
-                    Manage Tasks →
-                  </a>
+                  <div className="mt-4 flex flex-wrap gap-3">
+
+                    <a
+                      href="/tasks"
+                      className="rounded-lg bg-purple-500 px-4 py-2 text-sm font-semibold hover:bg-purple-400"
+                    >
+                      Manage Tasks →
+                    </a>
+
+                    <a
+                      href="/agent"
+                      className="rounded-lg border border-purple-500/30 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-500/20"
+                    >
+                      Open Agent →
+                    </a>
+
+                  </div>
                 </>
               ) : (
                 <p className="mt-2 text-slate-400">
@@ -314,15 +481,17 @@ export default function DashboardPage() {
                   right now.
                 </p>
               )}
+
             </div>
 
           </div>
+
         </section>
 
-        {/* Main Grid */}
+        {/* MAIN GRID */}
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
 
-          {/* Priority Tasks */}
+          {/* PRIORITY TASKS */}
           <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
             <div className="flex items-center justify-between">
@@ -358,10 +527,10 @@ export default function DashboardPage() {
 
                     return (
                       (order[
-                        a.priority.toUpperCase()
+                        a.priority?.toUpperCase()
                       ] || 5) -
                       (order[
-                        b.priority.toUpperCase()
+                        b.priority?.toUpperCase()
                       ] || 5)
                     );
                   })
@@ -375,6 +544,7 @@ export default function DashboardPage() {
                       <div className="flex items-start justify-between gap-4">
 
                         <div>
+
                           <p className="font-semibold">
                             {task.title}
                           </p>
@@ -387,6 +557,7 @@ export default function DashboardPage() {
                               )}
                             </p>
                           )}
+
                         </div>
 
                         <span
@@ -408,9 +579,10 @@ export default function DashboardPage() {
               )}
 
             </div>
+
           </section>
 
-          {/* Upcoming Deadlines */}
+          {/* UPCOMING DEADLINES */}
           <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
             <h2 className="text-xl font-semibold">
@@ -455,11 +627,12 @@ export default function DashboardPage() {
               )}
 
             </div>
+
           </section>
 
         </div>
 
-        {/* Upcoming Events */}
+        {/* UPCOMING EVENTS */}
         <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
           <div className="flex items-center justify-between">
@@ -480,34 +653,39 @@ export default function DashboardPage() {
           <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 
             {upcomingEvents.length > 0 ? (
-              upcomingEvents.map((event, index) => (
-                <div
-                  key={event.id || index}
-                  className="rounded-xl bg-slate-950 p-5"
-                >
+              upcomingEvents.map(
+                (event, index) => (
+                  <div
+                    key={
+                      event.id || index
+                    }
+                    className="rounded-xl bg-slate-950 p-5"
+                  >
 
-                  <p className="font-semibold">
-                    {event.title}
-                  </p>
-
-                  <p className="mt-2 text-blue-400">
-                    📅 {formatDate(event.date)}
-                  </p>
-
-                  {event.time && (
-                    <p className="mt-1 text-sm text-slate-400">
-                      🕐 {event.time}
+                    <p className="font-semibold">
+                      {event.title}
                     </p>
-                  )}
 
-                  {event.location && (
-                    <p className="mt-1 text-sm text-slate-400">
-                      📍 {event.location}
+                    <p className="mt-2 text-blue-400">
+                      📅{" "}
+                      {formatDate(event.date)}
                     </p>
-                  )}
 
-                </div>
-              ))
+                    {event.time && (
+                      <p className="mt-1 text-sm text-slate-400">
+                        🕐 {event.time}
+                      </p>
+                    )}
+
+                    {event.location && (
+                      <p className="mt-1 text-sm text-slate-400">
+                        📍 {event.location}
+                      </p>
+                    )}
+
+                  </div>
+                )
+              )
             ) : (
               <p className="text-slate-500">
                 No upcoming academic events.
@@ -518,8 +696,21 @@ export default function DashboardPage() {
 
         </section>
 
-        {/* Navigation */}
-        <section className="mt-6 grid gap-4 md:grid-cols-3">
+        {/* NAVIGATION */}
+        <section className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+
+          <a
+            href="/agent"
+            className="rounded-2xl border border-purple-500/20 bg-purple-500/5 p-5 transition hover:border-purple-500"
+          >
+            <p className="text-lg font-semibold">
+              🤖 CampusPilot Agent
+            </p>
+
+            <p className="mt-2 text-sm text-slate-400">
+              Find your next best academic action.
+            </p>
+          </a>
 
           <a
             href="/upload"
@@ -530,8 +721,8 @@ export default function DashboardPage() {
             </p>
 
             <p className="mt-2 text-sm text-slate-400">
-              Extract tasks and events from a new
-              academic notice.
+              Extract tasks and events from a new academic
+              notice.
             </p>
           </a>
 
@@ -544,8 +735,7 @@ export default function DashboardPage() {
             </p>
 
             <p className="mt-2 text-sm text-slate-400">
-              Complete and organize your academic
-              tasks.
+              Complete and organize your academic tasks.
             </p>
           </a>
 
@@ -558,9 +748,48 @@ export default function DashboardPage() {
             </p>
 
             <p className="mt-2 text-sm text-slate-400">
-              View exams, deadlines, and academic
-              events.
+              View exams, deadlines, and academic events.
             </p>
+          </a>
+
+        </section>
+
+        {/* FOOTER NAVIGATION */}
+        <section className="mt-8 flex flex-wrap justify-center gap-3 pb-6">
+
+          <a
+            href="/dashboard"
+            className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white"
+          >
+            Dashboard
+          </a>
+
+          <a
+            href="/agent"
+            className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-900 hover:text-white"
+          >
+            Agent
+          </a>
+
+          <a
+            href="/tasks"
+            className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-900 hover:text-white"
+          >
+            Tasks
+          </a>
+
+          <a
+            href="/calendar"
+            className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-900 hover:text-white"
+          >
+            Calendar
+          </a>
+
+          <a
+            href="/reminders"
+            className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-900 hover:text-white"
+          >
+            Reminders
           </a>
 
         </section>

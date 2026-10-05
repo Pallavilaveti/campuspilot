@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { analyzeNotice } from "@/lib/analyzeNotice";
+import { analyzeNotice } from "@/lib/ai";
 
 export async function POST(request: Request) {
   try {
@@ -20,18 +20,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const analysis =
-      await analyzeNotice(text);
+    const analysis = await analyzeNotice(text);
 
     return NextResponse.json({
       success: true,
       analysis,
     });
   } catch (error) {
-    console.error(
-      "CampusPilot /api/analyze error:",
-      error
-    );
+    console.error("CampusPilot /api/analyze error:", error);
 
     return NextResponse.json(
       {

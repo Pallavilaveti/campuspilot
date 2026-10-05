@@ -382,8 +382,8 @@ export default function HomePage() {
               status:
                 task.status ===
                 "COMPLETED"
-                  ? "PENDING"
-                  : "COMPLETED",
+                  ? ("PENDING" as const)
+                  : ("COMPLETED" as const),
             }
           : task
     );
